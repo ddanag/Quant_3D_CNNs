@@ -1,3 +1,14 @@
+# Quantized 3D CNNs for Action Recognition
+
+## Update (2024/4/23) - Dana Diaconu
+
+The original open-source repo https://github.com/kenshohara/3D-ResNets-PyTorch is being used a backbone.
+This repo builds upon the backbone and the pre-trained models and adds the following:
+    - Quantized definition of 3D ResNet and R(2+1)D.
+    - Supports QAT (Quantization-Aware Training) by leveraging the brevitas library.
+    - Adds support for model export to an ONNX format.
+
+
 # 3D ResNets for Action Recognition
 
 ## Update (2020/4/13)

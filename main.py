@@ -1,3 +1,25 @@
+# Copyright (c) 2024 -      Dana Diaconu
+# Copyright (c) 2017 - 2020 Kensho Hara
+
+# MIT License
+#Permission is hereby granted, free of charge, to any person obtaining a copy
+#of this software and associated documentation files (the "Software"), to deal
+#in the Software without restriction, including without limitation the rights
+#to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#copies of the Software, and to permit persons to whom the Software is
+#furnished to do so, subject to the following conditions:
+
+#The above copyright notice and this permission notice shall be included in all
+#copies or substantial portions of the Software.
+
+#THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#SOFTWARE.
+
 from pathlib import Path
 import json
 import random
@@ -179,10 +201,10 @@ def get_train_utils(opt, model_parameters):
                                                worker_init_fn=worker_init_fn)
 
     if opt.is_master_node:
-        train_logger = Logger(opt.result_path / 'train.log',
+        train_logger = Logger(opt.result_path / 'train_quant_r3d34_w8a8.log',
                               ['epoch', 'loss', 'acc', 'lr'])
         train_batch_logger = Logger(
-            opt.result_path / 'train_batch.log',
+            opt.result_path / 'train_quant_r3d34_w8a8.log',
             ['epoch', 'batch', 'iter', 'loss', 'acc', 'lr'])
     else:
         train_logger = None
@@ -253,7 +275,7 @@ def get_val_utils(opt):
                                              collate_fn=collate_fn)
 
     if opt.is_master_node:
-        val_logger = Logger(opt.result_path / 'val.log',
+        val_logger = Logger(opt.result_path / 'val_quant_r3d34_w8a8.log',
                             ['epoch', 'loss', 'acc'])
     else:
         val_logger = None
@@ -299,6 +321,30 @@ def get_inference_utils(opt):
 
     return inference_loader, inference_data.class_names
 
+def export(model):    
+    """
+    Export to finn onnx format
+    """
+    import brevitas.onnx as bo
+    from brevitas.quant_tensor import QuantTensor
+    ready_model_filename = os.path.join("results/r3d34_quant_w8a8.onnx")
+    input_shape = (128, 3, 16, 112, 112) #NOTE: change 224 -> 32 on CIFAR10   #DD original (1, 3, 224, 224)
+    # create a QuantTensor instance to mark input as bipolar during export
+    input_a = np.random.randint(0, 256, size=input_shape).astype(np.float32)
+    input_a = 2 * input_a - 1
+    scale = 1.0
+    input_t = torch.from_numpy(input_a * scale)
+    input_t=input_t.cuda() #DD added to solve  "NotImplementedError: Could not run 'aten::slow_conv3d_forward' with arguments from the 'CUDA' backend."
+    input_qt = QuantTensor(
+                            input_t, 
+                            #scale=torch.tensor(scale), # scale will result in one mul 1.0 layer
+                            bit_width=torch.tensor(8.0)
+                            #, signed=True # signed will result in torch.bool or bipolar datatype
+                            )
+    #import pdb; pdb.set_trace()
+    bo.export_finn_onnx(model, export_path=ready_model_filename, input_t=input_qt)
+    #self.logger.info(f"FINN-ONNX model saved to {ready_model_filename}")
+
 
 def save_checkpoint(save_file_path, epoch, arch, model, optimizer, scheduler):
     if hasattr(model, 'module'):
@@ -313,6 +359,7 @@ def save_checkpoint(save_file_path, epoch, arch, model, optimizer, scheduler):
         'scheduler': scheduler.state_dict()
     }
     torch.save(save_states, save_file_path)
+    
 
 
 def main_worker(index, opt):
@@ -335,12 +382,14 @@ def main_worker(index, opt):
     opt.is_master_node = not opt.distributed or opt.dist_rank == 0
 
     model = generate_model(opt)
+
     if opt.batchnorm_sync:
         assert opt.distributed, 'SyncBatchNorm only supports DistributedDataParallel.'
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     if opt.pretrain_path:
         model = load_pretrained_model(model, opt.pretrain_path, opt.model,
                                       opt.n_finetune_classes)
+        #import pdb; pdb.set_trace()
     if opt.resume_path is not None:
         model = resume_model(opt.resume_path, opt.arch, model)
     model = make_data_parallel(model, opt.distributed, opt.device)
@@ -410,6 +459,9 @@ def main_worker(index, opt):
                             inference_class_names, opt.inference_no_average,
                             opt.output_topk)
 
+    #model.cuda()
+    model=model.module
+    export(model)
 
 if __name__ == '__main__':
     opt = get_opt()
